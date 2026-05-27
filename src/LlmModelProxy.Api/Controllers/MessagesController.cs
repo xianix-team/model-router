@@ -179,6 +179,17 @@ public sealed class MessagesController : ControllerBase
             }
         }
         catch (OperationCanceledException) { /* client disconnected */ }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+        {
+            _audit.LogError(reqId, "provider.StreamAsync [rate-limited]", ex);
+            // Headers haven't been sent yet (stream hasn't started), so we can
+            // still set the status code and Retry-After before writing anything.
+            var waitSecs = ex.Data["RetryAfterSeconds"] as int? ?? 60;
+            Response.StatusCode = 429;
+            Response.Headers["Retry-After"] = waitSecs.ToString();
+            var errEvent = $"event: error\ndata: {{\"type\":\"error\",\"error\":{{\"type\":\"rate_limit_error\",\"message\":\"{ex.Message}\"}}}}\n\n";
+            await Response.WriteAsync(errEvent, ct);
+        }
         catch (Exception ex)
         {
             _audit.LogError(reqId, "provider.StreamAsync", ex);
