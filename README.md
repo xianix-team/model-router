@@ -111,6 +111,17 @@ claude
 
 ## Running with Docker
 
+### Build the image
+
+Before using Docker Compose or the Xianix Agent sidecar, build and tag the image:
+
+```bash
+cd llm-model-proxy
+docker build -t 99xio/llm-model-proxy:latest .
+```
+
+This is the image name the Xianix Agent (`the-agent`) expects by default when a `"proxy"` block is declared in `rules.json`. If you prefer a different tag, update the `"image"` field in each execution's `"proxy"` block accordingly.
+
 ### OpenAI backend (default)
 
 ```bash
@@ -118,7 +129,7 @@ claude
 cp .env.example .env
 # Edit .env — set OPENAI_API_KEY=sk-proj-...
 
-docker compose up --build
+docker compose up
 ```
 
 Docker Compose reads `.env` automatically and injects the values into the container. The proxy is available on **host port 8766**.
@@ -132,7 +143,7 @@ Spins up the proxy + an Ollama sidecar in one command:
 ```bash
 cp .env.example .env   # OPENAI_API_KEY can stay blank for Ollama
 
-docker compose --profile ollama up --build
+docker compose --profile ollama up
 ```
 
 Pull a model into Ollama (first time only):
@@ -142,6 +153,75 @@ docker exec llm-ollama ollama pull llama3:8b
 ```
 
 Set `OLLAMA_MODEL=llama3:8b` in `.env` to change the default model.
+
+---
+
+## Using as a Xianix Agent sidecar
+
+The proxy can run as an automatic sidecar alongside the Xianix Agent executor. When a webhook fires, the agent starts the proxy container on a private Docker network, injects `ANTHROPIC_BASE_URL` into the executor, and tears everything down when the execution finishes. No manual `docker run` needed.
+
+### 1 — Build the image on the agent host
+
+The image must exist on the same Docker host that runs the Xianix Agent:
+
+```bash
+cd llm-model-proxy
+docker build -t 99xio/llm-model-proxy:latest .
+```
+
+Only needs to be run once (or after each proxy update). The agent will find the image by name on the local daemon — no registry push required.
+
+### 2 — Add the OpenAI key to the tenant Secret Vault
+
+The proxy container reads its upstream credentials from the execution's `with-envs`, not from the agent host environment. Add your OpenAI key to the Xianix Secret Vault under the key `OPENAI-API-KEY`:
+
+```
+Secret key:   OPENAI-API-KEY
+Secret value: sk-proj-...
+```
+
+This maps to `Proxy__Providers__OpenAI__ApiKey` inside the container (ASP.NET Core reads `__`-separated env vars as nested config keys).
+
+### 3 — Enable the proxy in `rules.json`
+
+Each execution block in `the-agent/TheAgent/Knowledge/rules.json` that should use the proxy needs a `"proxy"` section (already added for all four default executions):
+
+```json
+"proxy": {
+  "image": "99xio/llm-model-proxy:latest",
+  "port": 8766,
+  "with-envs": [
+    {
+      "name": "Proxy__Providers__OpenAI__ApiKey",
+      "value": "secrets.OPENAI-API-KEY",
+      "mandatory": true
+    }
+  ]
+}
+```
+
+Remove or omit the `"proxy"` block entirely to have that execution call the Anthropic API directly instead.
+
+### How it works at runtime
+
+```
+Webhook fires
+    │
+    ▼
+ProcessingWorkflow
+    ├─ docker network create  xianix-net-<execId>
+    ├─ docker run             xianix-proxy-<execId>   ← proxy on private network
+    ├─ docker run             executor                 ← joins same network
+    │       ANTHROPIC_BASE_URL=http://xianix-proxy-<execId>:8766
+    │       ANTHROPIC_API_KEY=proxy-intercepted        ← placeholder; proxy uses its own key
+    │
+    │   executor → proxy → OpenAI
+    │
+    ├─ docker rm  executor
+    └─ docker rm  xianix-proxy-<execId>  +  network
+```
+
+The executor's `ANTHROPIC_API_KEY` is set to a placeholder (`proxy-intercepted`) when no real Anthropic key is present — the proxy discards it and uses the OpenAI key from its own env. Set a real Anthropic key on the agent host (`ANTHROPIC-API-KEY`) if you also want passthrough-to-Anthropic routing to work.
 
 ---
 
