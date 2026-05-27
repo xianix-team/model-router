@@ -1,0 +1,91 @@
+version: "3.9"
+
+# ── LlmModelProxy — docker-compose ────────────────────────────────────────────
+#
+# Profiles:
+#   default (no profile)  — proxy + openai  (set OPENAI_API_KEY in .env)
+#   ollama                — proxy + local Ollama sidecar (no API key needed)
+#
+# Usage:
+#   # OpenAI backend:
+#   OPENAI_API_KEY=sk-... docker compose up
+#
+#   # Local Ollama backend:
+#   docker compose --profile ollama up
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+
+  # ── Anthropic-façade proxy ─────────────────────────────────────────────────
+  proxy:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: llm-model-proxy:latest
+    container_name: llm-model-proxy
+    restart: unless-stopped
+    ports:
+      - "8766:8766"
+    environment:
+      ASPNETCORE_ENVIRONMENT: Production
+      # OpenAI provider
+      Proxy__Providers__OpenAI__ApiKey:     ${OPENAI_API_KEY:-}
+      Proxy__Providers__OpenAI__BaseUrl:    ${OPENAI_BASE_URL:-https://api.openai.com}
+      Proxy__Providers__OpenAI__DefaultModel: ${OPENAI_DEFAULT_MODEL:-gpt-4o}
+      # Azure OpenAI provider (optional)
+      Proxy__Providers__AzureOpenAI__Endpoint:       ${AZURE_OPENAI_ENDPOINT:-}
+      Proxy__Providers__AzureOpenAI__ApiKey:          ${AZURE_OPENAI_API_KEY:-}
+      Proxy__Providers__AzureOpenAI__DeploymentName:  ${AZURE_OPENAI_DEPLOYMENT:-}
+      # Anthropic passthrough (optional)
+      Proxy__Providers__Anthropic__ApiKey: ${ANTHROPIC_API_KEY:-}
+      # Pipeline settings
+      Proxy__Pipeline__ToolChoice:      ${TOOL_CHOICE:-required}
+      Proxy__Pipeline__InjectAgentHint: ${INJECT_AGENT_HINT:-true}
+      Proxy__Pipeline__SystemAppend:    ${SYSTEM_APPEND:-}
+      # Audit log
+      Proxy__Logging__Enabled:  "true"
+      Proxy__Logging__FilePath: /logs/proxy-audit.log
+    volumes:
+      - proxy_logs:/logs
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:8766/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ── Optional: local Ollama sidecar ─────────────────────────────────────────
+  ollama:
+    profiles: ["ollama"]
+    image: ollama/ollama:latest
+    container_name: llm-ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    environment:
+      OLLAMA_HOST: 0.0.0.0
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:11434/api/tags"]
+      interval: 20s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # When using the ollama profile, override the proxy's OpenAI base URL.
+  proxy-ollama-override:
+    profiles: ["ollama"]
+    extends:
+      service: proxy
+    environment:
+      Proxy__Providers__OpenAI__BaseUrl:      http://ollama:11434
+      Proxy__Providers__OpenAI__DefaultModel: ${OLLAMA_MODEL:-llama3:8b}
+      Proxy__Providers__OpenAI__ApiKey:       ""
+    depends_on:
+      ollama:
+        condition: service_healthy
+
+volumes:
+  proxy_logs:
+  ollama_models:

@@ -1,0 +1,13 @@
+**/.vs
+**/.vscode
+**/bin
+**/obj
+**/*.user
+**/*.suo
+**/.git
+**/.gitignore
+**/proxy-audit*.log
+**/proxy-debug*.log
+.env
+docker-compose.override.yml
+README.md

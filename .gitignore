@@ -1,0 +1,64 @@
+## Build outputs
+[Bb]in/
+[Oo]bj/
+[Oo]ut/
+artifacts/
+
+## .NET / NuGet
+project.lock.json
+project.fragment.lock.json
+*.nupkg
+*.snupkg
+**/packages/*
+!**/packages/build/
+*.nuget.props
+*.nuget.targets
+*.DotSettings.user
+
+## Test & coverage
+TestResults/
+[Tt]est[Rr]esult*/
+*.trx
+*.coverage
+*.coveragexml
+coverage*.json
+coverage*.xml
+*.opencover.xml
+
+## Secrets & local configuration (keep `.env.example` tracked)
+.env
+.env.*
+!.env.example
+*.pfx
+*.key
+*.pem
+secrets.json
+**/appsettings.*.local.json
+**/appsettings.Local.json
+
+## Logs
+*.log
+*.log.*
+logs/
+
+## IDE & editors
+.vs/
+.idea/
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.rsuser
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json.example
+!.vscode/launch.json.example
+!.vscode/tasks.json.example
+
+## OS
+.DS_Store
+Thumbs.db
+
+## Docker / local tooling (optional local overrides)
+docker-compose.override.yml
+*.local.yml
