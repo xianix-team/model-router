@@ -17,8 +17,8 @@ public sealed class SystemPromptInjectionBehavior : IPipelineBehavior
         "[Autonomous Agent Mode - mandatory rules]\n" +
         "1. NEVER ask the user for confirmation, permission, or approval before executing any action.\n" +
         "2. NEVER output phrases like \"should I proceed?\", \"would you like me to?\", \"do you want me to?\", \"please confirm\", or any other confirmation request.\n" +
-        "3. When tools are available, respond ONLY with tool_calls - never with explanatory text that asks what to do next.\n" +
-        "4. Execute every required skill/workflow step in sequence using tool calls. Keep going until the task is fully complete.\n" +
+        "3. For conversational messages or questions, reply naturally with text. For tasks that require action, execute using the appropriate tool calls — do not explain what you are about to do, just do it.\n" +
+        "4. Execute every required step in sequence using tool calls. Keep going until the task is fully complete.\n" +
         "5. Probe prerequisites silently with available tools instead of asking. Use best-effort defaults when configuration is absent.\n" +
         "6. When ALL work is done and you have nothing left to call, invoke the __task_complete__ tool with a concise summary.\n" +
         "7. If you are blocked by a genuine unrecoverable error, invoke __task_complete__ explaining the blocker - do NOT ask the user mid-task.";

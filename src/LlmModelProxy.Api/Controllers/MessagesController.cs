@@ -1,9 +1,11 @@
 using System.Text;
 using System.Text.Json;
+using LlmModelProxy.Core.Configuration;
 using LlmModelProxy.Core.Interfaces;
 using LlmModelProxy.Core.Models.Anthropic;
 using LlmModelProxy.Core.Pipeline;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Options;
 
 namespace LlmModelProxy.Api.Controllers;
 
@@ -27,17 +29,20 @@ public sealed class MessagesController : ControllerBase
     private readonly ProxyPipeline _pipeline;
     private readonly IProviderRouter _router;
     private readonly IProxyAuditLogger _audit;
+    private readonly IOptions<PipelineOptions> _pipelineOpts;
     private readonly ILogger<MessagesController> _logger;
 
     public MessagesController(
         ProxyPipeline pipeline,
         IProviderRouter router,
         IProxyAuditLogger audit,
+        IOptions<PipelineOptions> pipelineOpts,
         ILogger<MessagesController> logger)
     {
         _pipeline = pipeline;
         _router = router;
         _audit = audit;
+        _pipelineOpts = pipelineOpts;
         _logger = logger;
     }
 
@@ -53,8 +58,13 @@ public sealed class MessagesController : ControllerBase
         await _pipeline.ExecuteAsync(request, cancellationToken);
 
         var provider = _router.Route(request.Model);
+        // Log the effective tool_choice that will be sent to the provider,
+        // not the raw incoming value from the Anthropic client.
+        var effectiveToolChoice = request.Tools is { Count: > 0 }
+            ? (_pipelineOpts.Value.ToolChoice?.Trim().ToLowerInvariant() ?? "auto")
+            : "n/a";
         _audit.LogProviderCall(reqId, provider.Name, request.Model,
-            request.ToolChoice?.Type ?? "auto", request.Tools?.Count ?? 0);
+            effectiveToolChoice, request.Tools?.Count ?? 0);
 
         if (request.Stream)
         {
@@ -78,6 +88,17 @@ public sealed class MessagesController : ControllerBase
         try
         {
             response = await provider.CompleteAsync(request, ct);
+        }
+        catch (HttpRequestException ex) when (ex.StatusCode == System.Net.HttpStatusCode.TooManyRequests)
+        {
+            _audit.LogError(reqId, "provider.CompleteAsync [rate-limited]", ex);
+            var waitSecs = ex.Data["RetryAfterSeconds"] as int? ?? 60;
+            Response.StatusCode = 429;
+            Response.Headers["Retry-After"] = waitSecs.ToString();
+            await Response.WriteAsJsonAsync(
+                new { type = "error", error = new { type = "rate_limit_error", message = ex.Message } },
+                ct);
+            return;
         }
         catch (Exception ex)
         {

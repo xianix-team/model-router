@@ -55,6 +55,7 @@ public sealed class OpenAiProvider : ILlmProvider
         using var httpResponse = await client.PostAsJsonAsync(
             "/v1/chat/completions", openAiRequest, cancellationToken);
 
+        ThrowIfRateLimited(httpResponse);
         httpResponse.EnsureSuccessStatusCode();
 
         var openAiResponse = await httpResponse.Content
@@ -92,6 +93,7 @@ public sealed class OpenAiProvider : ILlmProvider
             HttpCompletionOption.ResponseHeadersRead,
             cancellationToken);
 
+        ThrowIfRateLimited(httpResponse);
         httpResponse.EnsureSuccessStatusCode();
 
         var messageId = $"msg_{Guid.NewGuid():N}";
@@ -102,6 +104,36 @@ public sealed class OpenAiProvider : ILlmProvider
         {
             yield return evt;
         }
+    }
+
+    // ── Rate-limit helper ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Throws an <see cref="HttpRequestException"/> with
+    /// <see cref="System.Net.HttpStatusCode.TooManyRequests"/> when the upstream
+    /// returns 429, preserving the <c>Retry-After</c> value in the message so the
+    /// controller can forward it to the client.
+    /// </summary>
+    private static void ThrowIfRateLimited(HttpResponseMessage response)
+    {
+        if (response.StatusCode != System.Net.HttpStatusCode.TooManyRequests) return;
+
+        double retryAfter = 60.0;
+        if (response.Headers.RetryAfter?.Delta is { } delta)
+            retryAfter = delta.TotalSeconds;
+        else if (response.Headers.RetryAfter?.Date is { } date)
+            retryAfter = (date - DateTimeOffset.UtcNow).TotalSeconds;
+
+        // Round up and clamp to a sensible minimum.
+        var waitSeconds = (int)Math.Ceiling(Math.Max(retryAfter, 5));
+
+        throw new HttpRequestException(
+            $"OpenAI rate limit hit. Retry after {waitSeconds}s.",
+            inner: null,
+            statusCode: System.Net.HttpStatusCode.TooManyRequests)
+        {
+            Data = { ["RetryAfterSeconds"] = waitSeconds }
+        };
     }
 
     // ── SSE chunk reader ──────────────────────────────────────────────────────

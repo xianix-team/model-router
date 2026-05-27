@@ -14,6 +14,50 @@ namespace LlmModelProxy.Providers.OpenAI;
 /// </summary>
 public sealed class OpenAiRequestTranslator
 {
+    /// <summary>
+    /// Claude CLI meta-tools that are never forwarded to OpenAI regardless of context.
+    /// </summary>
+    private static readonly HashSet<string> MetaToolBlocklist = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "RemoteTrigger",
+        "AgentUsage",
+    };
+
+    /// <summary>
+    /// Returns <c>true</c> when the request contains a Claude CLI slash-command
+    /// invocation marker (<c>&lt;command-name&gt;</c> tag).  We use this to decide
+    /// whether to expose the <c>Skill</c> tool to the upstream model.
+    ///
+    /// <list type="bullet">
+    ///   <item>No tag present → <c>Skill</c> is stripped. The model cannot call it,
+    ///   so it responds with text or real tools.  Fixes the "hi → Skill(superpowers)"
+    ///   false-positive.</item>
+    ///   <item>Tag present (e.g. <c>/doc-agent:generate-docs</c>) → <c>Skill</c>
+    ///   remains in the tool list so the model dispatches the command correctly.</item>
+    /// </list>
+    ///
+    /// This is a structural guard at the proxy layer — no model instruction required.
+    /// </summary>
+    private static bool HasSlashCommandTag(AnthropicRequest req)
+    {
+        const string tag = "<command-name>";
+
+        var sys = req.FlattenSystem();
+        if (sys.Contains(tag, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        foreach (var msg in req.Messages)
+        {
+            var raw = msg.Content.ValueKind == JsonValueKind.String
+                ? (msg.Content.GetString() ?? string.Empty)
+                : msg.Content.GetRawText();
+            if (raw.Contains(tag, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
     private readonly OpenAiOptions _openAiOpts;
     private readonly PipelineOptions _pipelineOpts;
 
@@ -70,10 +114,19 @@ public sealed class OpenAiRequestTranslator
         else if (req.MaxTokens.HasValue)
             out_.MaxTokens = Clamp(req.MaxTokens.Value, cap);
 
-        // Tools.
-        if (req.Tools is { Count: > 0 })
+        // Tools — strip Claude CLI meta-tools before forwarding to OpenAI.
+        // Skill is only exposed when the request contains a <command-name> tag
+        // (i.e. the user explicitly invoked a slash command). Without that tag
+        // the model would spontaneously call Skill("superpowers") for "hi".
+        bool hasSlashCommand = HasSlashCommandTag(req);
+        var forwardableTools = req.Tools?
+            .Where(t => !MetaToolBlocklist.Contains(t.Name)
+                     && !(t.Name.Equals("Skill", StringComparison.OrdinalIgnoreCase) && !hasSlashCommand))
+            .ToList();
+
+        if (forwardableTools is { Count: > 0 })
         {
-            out_.Tools = req.Tools.Select(t => new OpenAiTool
+            out_.Tools = forwardableTools.Select(t => new OpenAiTool
             {
                 Function = new OpenAiFunction
                 {
