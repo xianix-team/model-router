@@ -223,6 +223,64 @@ ProcessingWorkflow
 
 The executor's `ANTHROPIC_API_KEY` is set to a placeholder (`proxy-intercepted`) when no real Anthropic key is present — the proxy discards it and uses the OpenAI key from its own env. Set a real Anthropic key on the agent host (`ANTHROPIC-API-KEY`) if you also want passthrough-to-Anthropic routing to work.
 
+### Using a private registry image
+
+By default the agent auto-pulls the proxy image from Docker Hub if it is not already present on the host. If your image is hosted on a **private registry** (Azure Container Registry, AWS ECR, GitHub Container Registry, a self-hosted registry, etc.) you need to authenticate before the pull can succeed.
+
+#### Current behaviour
+
+The agent calls the Docker pull API with no credentials. This works for any public Docker Hub image. For a private registry the pull will fail with a `401 Unauthorized` error and the execution will be aborted before the executor starts.
+
+#### Workaround — pre-pull the image manually
+
+Log in to your registry on the agent host and pull the image once before the agent runs:
+
+```bash
+# Azure Container Registry
+az acr login --name <registry-name>
+docker pull myregistry.azurecr.io/llm-model-proxy:latest
+
+# AWS ECR
+aws ecr get-login-password --region <region> \
+  | docker login --username AWS --password-stdin <account>.dkr.ecr.<region>.amazonaws.com
+docker pull <account>.dkr.ecr.<region>.amazonaws.com/llm-model-proxy:latest
+
+# GitHub Container Registry
+echo $GHCR_PAT | docker login ghcr.io -u <username> --password-stdin
+docker pull ghcr.io/<org>/llm-model-proxy:latest
+```
+
+Once the image is present locally the agent's auto-pull step skips the pull entirely (it checks local cache first via `docker image inspect`) and proceeds without needing registry credentials at runtime.
+
+Then update the `"image"` field in `rules.json` to the full registry path:
+
+```json
+"proxy": {
+  "image": "myregistry.azurecr.io/llm-model-proxy:latest",
+  "port": 8766,
+  "with-envs": [...]
+}
+```
+
+#### Planned — registry auth in `rules.json`
+
+A future release will add a `"registry-auth"` block to the proxy config so the agent can authenticate and pull private images at runtime without manual intervention:
+
+```json
+"proxy": {
+  "image": "myregistry.azurecr.io/llm-model-proxy:latest",
+  "port": 8766,
+  "registry-auth": {
+    "username": "secrets.REGISTRY-USERNAME",
+    "password": "secrets.REGISTRY-PASSWORD",
+    "server":   "myregistry.azurecr.io"
+  },
+  "with-envs": [...]
+}
+```
+
+Credentials will be resolved from the Xians Secret Vault (same `secrets.<KEY>` pattern as `with-envs`) and passed to the Docker pull API as an `AuthConfig` — they are never written to disk or logged.
+
 ---
 
 ## Configuration reference
