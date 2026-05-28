@@ -79,13 +79,43 @@ public sealed class ProxyAuditLogger : IProxyAuditLogger, IDisposable
     public void LogError(int reqId, string label, Exception? ex = null, string? detail = null)
     {
         if (!_enabled) return;
-        var msg = detail ?? ex?.Message ?? "unknown error";
-        _auditLog.Error("[{Ts:HH:mm:ss.fff}] #{ReqId} ERROR | {Label}: {Msg}",
-            DateTime.UtcNow, reqId, label, msg);
-        if (ex is not null)
-            _auditLog.Error(ex, "  Stack trace:");
+
+        var ts     = DateTime.UtcNow;
+        var status = ex is HttpRequestException { StatusCode: { } sc } ? (int)sc : (int?)null;
+        var msg    = detail ?? ex?.Message ?? "unknown error";
+        var hint   = BuildHint(status, msg);
+
+        _auditLog.Error(
+            "[{Ts:HH:mm:ss.fff}] #{ReqId} ERROR\n" +
+            "  where  : {Label}\n" +
+            "  status : {Status}\n" +
+            "  message: {Message}" +
+            "{Hint}",
+            ts, reqId,
+            label,
+            status.HasValue ? $"{status} ({(System.Net.HttpStatusCode)status.Value})" : "—",
+            msg,
+            hint is not null ? $"\n  hint   : {hint}" : "");
+
         _auditLog.Information("================");
     }
+
+    private static string? BuildHint(int? status, string message) => status switch
+    {
+        404 => "Check that BaseUrl in appsettings points at the correct provider URL " +
+               "AND that DefaultModel is a model the provider actually supports. " +
+               "These are the two most common causes of a 404.",
+        401 or 403 => "Authentication failed — verify ApiKey in appsettings.Local.json is " +
+                      "valid and has not expired.",
+        429 => "Rate limit hit — the provider is rejecting requests temporarily. " +
+               "Wait before retrying or switch to a model tier with a higher quota.",
+        >= 500 => "The provider returned a server-side error. " +
+                  "Check provider status page or try a different model.",
+        _ => message.Contains("SSL", StringComparison.OrdinalIgnoreCase) ||
+             message.Contains("certificate", StringComparison.OrdinalIgnoreCase)
+            ? "TLS/SSL error — check that BaseUrl uses https:// and the provider certificate is valid."
+            : null
+    };
 
     // ── Helpers ───────────────────────────────────────────────────────────────
 
