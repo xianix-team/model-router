@@ -56,7 +56,7 @@ public sealed class OpenAiProvider : ILlmProvider
             "/v1/chat/completions", openAiRequest, cancellationToken);
 
         ThrowIfRateLimited(httpResponse);
-        httpResponse.EnsureSuccessStatusCode();
+        await EnsureSuccessOrThrowWithBodyAsync(httpResponse, cancellationToken);
 
         var openAiResponse = await httpResponse.Content
             .ReadFromJsonAsync<OpenAiChatResponse>(cancellationToken: cancellationToken)
@@ -94,7 +94,7 @@ public sealed class OpenAiProvider : ILlmProvider
             cancellationToken);
 
         ThrowIfRateLimited(httpResponse);
-        httpResponse.EnsureSuccessStatusCode();
+        await EnsureSuccessOrThrowWithBodyAsync(httpResponse, cancellationToken);
 
         var messageId = $"msg_{Guid.NewGuid():N}";
         var chunks = ReadChunksAsync(httpResponse, cancellationToken);
@@ -104,6 +104,36 @@ public sealed class OpenAiProvider : ILlmProvider
         {
             yield return evt;
         }
+    }
+
+    // ── Error helpers ─────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Like <see cref="HttpResponseMessage.EnsureSuccessStatusCode"/> but reads
+    /// the response body on failure and stores it in
+    /// <c>HttpRequestException.Data["ResponseBody"]</c> so the audit logger can
+    /// surface the provider's actual error message without changing the console
+    /// log format.
+    /// </summary>
+    private static async Task EnsureSuccessOrThrowWithBodyAsync(
+        HttpResponseMessage response,
+        CancellationToken cancellationToken)
+    {
+        if (response.IsSuccessStatusCode) return;
+
+        var body = string.Empty;
+        try { body = await response.Content.ReadAsStringAsync(cancellationToken); }
+        catch { /* best-effort */ }
+
+        var ex = new HttpRequestException(
+            $"Response status code does not indicate success: {(int)response.StatusCode} ({response.ReasonPhrase}).",
+            inner: null,
+            statusCode: response.StatusCode);
+
+        if (!string.IsNullOrWhiteSpace(body))
+            ex.Data["ResponseBody"] = body;
+
+        throw ex;
     }
 
     // ── Rate-limit helper ─────────────────────────────────────────────────────

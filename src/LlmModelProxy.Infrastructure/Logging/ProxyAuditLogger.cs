@@ -83,6 +83,7 @@ public sealed class ProxyAuditLogger : IProxyAuditLogger, IDisposable
         var ts     = DateTime.UtcNow;
         var status = ex is HttpRequestException { StatusCode: { } sc } ? (int)sc : (int?)null;
         var msg    = detail ?? ex?.Message ?? "unknown error";
+        var body   = ex?.Data["ResponseBody"] as string;
         var hint   = BuildHint(status, msg);
 
         _auditLog.Error(
@@ -90,11 +91,13 @@ public sealed class ProxyAuditLogger : IProxyAuditLogger, IDisposable
             "  where  : {Label}\n" +
             "  status : {Status}\n" +
             "  message: {Message}" +
+            "{Body}" +
             "{Hint}",
             ts, reqId,
             label,
             status.HasValue ? $"{status} ({(System.Net.HttpStatusCode)status.Value})" : "—",
             msg,
+            body is not null ? $"\n  body   : {body}" : "",
             hint is not null ? $"\n  hint   : {hint}" : "");
 
         _auditLog.Information("================");
