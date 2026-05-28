@@ -65,11 +65,8 @@ public static class ProviderServiceExtensions
         services.AddHttpClient("OpenAI", (sp, client) =>
         {
             var opts = sp.GetRequiredService<IOptions<OpenAiOptions>>().Value;
-            var baseUrl = string.IsNullOrWhiteSpace(opts.BaseUrl) ? "https://api.openai.com" : opts.BaseUrl;
-            // Ensure trailing slash so relative request paths (e.g. "v1/chat/completions")
-            // are appended correctly rather than replacing the last path segment.
-            if (!baseUrl.EndsWith('/')) baseUrl += '/';
-            client.BaseAddress = new Uri(baseUrl);
+            client.BaseAddress = new Uri(
+                string.IsNullOrWhiteSpace(opts.BaseUrl) ? "https://api.openai.com" : opts.BaseUrl);
             if (!string.IsNullOrWhiteSpace(opts.ApiKey))
                 client.DefaultRequestHeaders.Authorization =
                     new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", opts.ApiKey);

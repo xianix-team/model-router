@@ -53,7 +53,7 @@ public sealed class OpenAiProvider : ILlmProvider
 
         var client = _httpClientFactory.CreateClient(HttpClientName);
         using var httpResponse = await client.PostAsJsonAsync(
-            "v1/chat/completions", openAiRequest, cancellationToken);
+            "/v1/chat/completions", openAiRequest, cancellationToken);
 
         ThrowIfRateLimited(httpResponse);
         await EnsureSuccessOrThrowWithBodyAsync(httpResponse, cancellationToken);
@@ -80,7 +80,7 @@ public sealed class OpenAiProvider : ILlmProvider
 
         var client = _httpClientFactory.CreateClient(HttpClientName);
 
-        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "v1/chat/completions")
+        using var httpRequest = new HttpRequestMessage(HttpMethod.Post, "/v1/chat/completions")
         {
             Content = new StringContent(
                 JsonSerializer.Serialize(openAiRequest),
